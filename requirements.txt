@@ -1,9 +1,10 @@
-torch>=1.7
+# Core PyTorch
+torch>=1.13
 torchvision
+timm>=0.9.2
 pyyaml
-huggingface_hub
-safetensors>=0.2
 numpy
+scipy
 
 # Deepfake Detection Research Dependencies
 scikit-learn>=1.0.0

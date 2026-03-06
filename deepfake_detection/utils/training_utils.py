@@ -6,6 +6,9 @@ and other training-related utilities.
 """
 
 import os
+import copy
+import random
+import re
 import torch
 import torch.nn as nn
 import numpy as np
@@ -70,7 +73,9 @@ def save_checkpoint(
         checkpoint['scheduler_state_dict'] = scheduler.state_dict()
     
     # Create directory if it doesn't exist
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    dir_name = os.path.dirname(filepath)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
     
     torch.save(checkpoint, filepath)
     logger.info(f"Checkpoint saved to {filepath}")
@@ -215,7 +220,7 @@ class EarlyStopping:
             self.counter = 0
             
             if self.restore_best_weights and model is not None:
-                self.best_weights = model.state_dict().copy()
+                self.best_weights = copy.deepcopy(model.state_dict())
         else:
             self.counter += 1
         
@@ -226,6 +231,61 @@ class EarlyStopping:
             return True
         
         return False
+
+
+def set_seed(seed: int = 42) -> None:
+    """
+    Seed all RNG subsystems for full reproducibility.
+    Reference: PyTorch Reproducibility docs; NeurIPS 2022 checklist.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def get_llrd_param_groups(
+    model, base_lr: float, layer_decay: float = 0.75,
+    weight_decay: float = 0.05
+) -> list:
+    """
+    Layer-wise Learning Rate Decay for Vision Transformers.
+    Reference: BEiT (Bao et al., ICLR 2022); DeiT (Touvron et al., ICML 2021).
+
+    lr_l = base_lr * layer_decay^(num_layers - layer_id)
+    """
+    # Determine total number of transformer blocks
+    inner = model.model if hasattr(model, 'model') else model
+    num_blocks = len(inner.blocks) if hasattr(inner, 'blocks') else 12
+    num_layers = num_blocks + 2  # +1 for embedding, +1 for head
+
+    param_groups = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        # No weight decay for 1D params (bias, LayerNorm)
+        wd = weight_decay if param.ndim >= 2 else 0.0
+
+        # Assign layer id
+        if any(k in name for k in ('patch_embed', 'cls_token', 'pos_embed')):
+            layer_id = 0
+        elif any(k in name for k in ('head', 'classifier', 'fc_norm')):
+            layer_id = num_layers - 1
+        else:
+            m = re.search(r'blocks\.(\d+)\.', name)
+            layer_id = (int(m.group(1)) + 1) if m else num_layers // 2
+
+        lr_scale = layer_decay ** (num_layers - layer_id - 1)
+        param_groups.append({
+            'params': [param],
+            'lr': base_lr * lr_scale,
+            'weight_decay': wd
+        })
+
+    return param_groups
 
 
 class AverageMeter:

@@ -8,6 +8,7 @@ implementations compatible with the timm framework.
 import torch
 import torch.nn as nn
 import numpy as np
+import cv2
 from torchvision import transforms
 from typing import Tuple, Optional, Dict, Any
 import random
@@ -16,14 +17,16 @@ import random
 class MixUpAugmentation:
     """MixUp augmentation implementation."""
     
-    def __init__(self, alpha: float = 0.2, prob: float = 0.5):
+    def __init__(self, alpha: float = 0.2, prob: float = 0.5, seed: int = None):
         """
         Args:
             alpha: Beta distribution parameter for mixing coefficient
             prob: Probability of applying MixUp
+            seed: Optional seed for reproducible augmentation
         """
         self.alpha = alpha
         self.prob = prob
+        self.rng = np.random.default_rng(seed)
     
     def __call__(self, batch: torch.Tensor, targets: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -36,16 +39,19 @@ class MixUpAugmentation:
         Returns:
             Tuple of (mixed_batch, mixed_targets)
         """
-        if random.random() > self.prob:
+        if self.rng.random() > self.prob:
             return batch, targets
         
         batch_size = batch.size(0)
         
         # Sample mixing coefficient
         if self.alpha > 0:
-            lam = np.random.beta(self.alpha, self.alpha)
+            lam = self.rng.beta(self.alpha, self.alpha)
         else:
             lam = 1
+        
+        # Ensure dominant sample retains majority weight (Zhang et al., 2018)
+        lam = max(lam, 1 - lam)
         
         # Create random permutation
         index = torch.randperm(batch_size).to(batch.device)
@@ -63,14 +69,16 @@ class MixUpAugmentation:
 class CutMixAugmentation:
     """CutMix augmentation implementation."""
     
-    def __init__(self, alpha: float = 1.0, prob: float = 0.5):
+    def __init__(self, alpha: float = 1.0, prob: float = 0.5, seed: int = None):
         """
         Args:
             alpha: Beta distribution parameter for mixing coefficient
             prob: Probability of applying CutMix
+            seed: Optional seed for reproducible augmentation
         """
         self.alpha = alpha
         self.prob = prob
+        self.rng = np.random.default_rng(seed)
     
     def __call__(self, batch: torch.Tensor, targets: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -83,14 +91,14 @@ class CutMixAugmentation:
         Returns:
             Tuple of (mixed_batch, mixed_targets)
         """
-        if random.random() > self.prob:
+        if self.rng.random() > self.prob:
             return batch, targets
         
         batch_size = batch.size(0)
         
         # Sample mixing coefficient
         if self.alpha > 0:
-            lam = np.random.beta(self.alpha, self.alpha)
+            lam = self.rng.beta(self.alpha, self.alpha)
         else:
             lam = 1
         
@@ -104,8 +112,8 @@ class CutMixAugmentation:
         cut_h = int(H * cut_rat)
         
         # Uniform sampling
-        cx = np.random.randint(W)
-        cy = np.random.randint(H)
+        cx = self.rng.integers(W)
+        cy = self.rng.integers(H)
         
         bbx1 = np.clip(cx - cut_w // 2, 0, W)
         bby1 = np.clip(cy - cut_h // 2, 0, H)
@@ -239,11 +247,16 @@ class FaceSpecificAugmentation:
         Apply face-specific augmentations.
         
         Args:
-            image: Input image tensor of shape (C, H, W)
+            image: Input image tensor of shape (C, H, W) in [0, 1] range
             
         Returns:
             Augmented image tensor
         """
+        # Safety assertion: must be applied before normalization (Bug #14)
+        assert image.max() <= 1.0 + 1e-5 and image.min() >= -1e-5, \
+            "FaceSpecificAugmentation must be applied before normalization. " \
+            f"Got range [{image.min():.3f}, {image.max():.3f}]"
+        
         if random.random() > self.prob:
             return image
         
@@ -259,10 +272,22 @@ class FaceSpecificAugmentation:
         return aug_func(image)
     
     def _add_compression_artifacts(self, image: torch.Tensor) -> torch.Tensor:
-        """Simulate JPEG compression artifacts."""
-        # Simple implementation: add quantization noise
-        noise = torch.randn_like(image) * 0.02
-        return torch.clamp(image + noise, 0, 1)
+        """
+        Simulate JPEG compression via actual DCT-quantization round-trip.
+        Quality factor drawn from U[20, 75] to span low-to-medium compression.
+        """
+        # Convert [0,1] float tensor -> uint8 HWC numpy
+        img_np = (image.permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        
+        quality = random.randint(20, 75)
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+        _, buf = cv2.imencode('.jpg', img_bgr, encode_params)
+        decoded_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        decoded_rgb = cv2.cvtColor(decoded_bgr, cv2.COLOR_BGR2RGB)
+        
+        # Back to [0,1] float CHW tensor
+        return torch.from_numpy(decoded_rgb.astype(np.float32) / 255.0).permute(2, 0, 1)
     
     def _add_gaussian_noise(self, image: torch.Tensor) -> torch.Tensor:
         """Add Gaussian noise to simulate camera sensor noise."""

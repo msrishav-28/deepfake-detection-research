@@ -15,6 +15,7 @@ from sklearn.metrics import (
 )
 from sklearn.metrics import cohen_kappa_score, matthews_corrcoef
 from scipy import stats
+from scipy.stats import chi2
 from typing import Dict, List, Tuple, Optional, Any
 import pandas as pd
 import logging
@@ -289,8 +290,10 @@ class EvaluationMetrics:
             linewidth=2, label=f'PR Curve (AUC = {auc_pr:.3f})'
         )
         
-        # Plot baseline
-        baseline = np.sum(metrics['confusion_matrix'][1]) / np.sum(metrics['confusion_matrix'])
+        # Plot baseline — use explicit TP/FN fields (Bug #12)
+        positives = metrics['tp'] + metrics['fn']
+        total = metrics['tp'] + metrics['fn'] + metrics['tn'] + metrics['fp']
+        baseline = positives / total
         ax.axhline(y=baseline, color='k', linestyle='--', linewidth=1, label=f'Baseline ({baseline:.3f})')
         
         ax.set_xlim([0.0, 1.0])
@@ -364,6 +367,14 @@ class ModelComparator:
         metrics = evaluator.calculate_all_metrics(y_true, y_pred, y_proba)
         self.model_results[model_name] = metrics
         
+        # Store raw predictions for statistical testing (Bug #4)
+        if not hasattr(self, 'model_predictions'):
+            self.model_predictions = {}
+        self.model_predictions[model_name] = {
+            'y_true': np.array(y_true),
+            'y_pred': np.array(y_pred)
+        }
+        
         logger.info(f"Added results for {model_name}")
     
     def compare_models(self) -> pd.DataFrame:
@@ -412,23 +423,46 @@ class ModelComparator:
         if model1 not in self.model_results or model2 not in self.model_results:
             raise ValueError("Model results not found")
         
-        # This is a simplified test - in practice, you'd need multiple runs
-        # or bootstrap sampling for proper statistical testing
-        value1 = self.model_results[model1][metric]
-        value2 = self.model_results[model2][metric]
+        # Check if raw predictions are available for McNemar's test
+        if not hasattr(self, 'model_predictions') or \
+           model1 not in self.model_predictions or model2 not in self.model_predictions:
+            raise ValueError(
+                "Raw predictions required for McNemar's test. "
+                "Call add_model_results with y_true and y_pred first."
+            )
         
-        # Placeholder for actual statistical test
-        # In practice, use McNemar's test for paired predictions
-        difference = abs(value1 - value2)
+        y_true = self.model_predictions[model1]['y_true']
+        y_pred1 = self.model_predictions[model1]['y_pred']
+        y_pred2 = self.model_predictions[model2]['y_pred']
+        
+        correct1 = (y_pred1 == y_true)
+        correct2 = (y_pred2 == y_true)
+        
+        n01 = int(np.sum(correct1 & ~correct2))  # A correct, B wrong
+        n10 = int(np.sum(~correct1 & correct2))  # A wrong, B correct
+        
+        if (n01 + n10) == 0:
+            return {
+                'test': 'McNemar (Dietterich 1998)',
+                'chi2': 0.0, 'p_value': 1.0, 'significant': False,
+                'n01': 0, 'n10': 0,
+                'note': 'Models make identical errors',
+                model1: self.model_results[model1].get(metric),
+                model2: self.model_results[model2].get(metric)
+            }
+        
+        # McNemar's test with continuity correction (Dietterich 1998)
+        chi2_stat = (abs(n01 - n10) - 1) ** 2 / (n01 + n10)
+        p_value = 1 - chi2.cdf(chi2_stat, df=1)
         
         return {
-            'model1': model1,
-            'model2': model2,
-            'metric': metric,
-            'value1': value1,
-            'value2': value2,
-            'difference': difference,
-            'significant': difference > 0.01  # Placeholder threshold
+            'test': 'McNemar (Dietterich 1998)',
+            'chi2': float(chi2_stat),
+            'p_value': float(p_value),
+            'n01': n01, 'n10': n10,
+            'significant': p_value < 0.05,
+            model1: self.model_results[model1].get(metric),
+            model2: self.model_results[model2].get(metric)
         }
     
     def plot_model_comparison(

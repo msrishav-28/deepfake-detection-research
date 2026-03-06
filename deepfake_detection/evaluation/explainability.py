@@ -62,11 +62,21 @@ class GradCAMVisualizer:
         model_name = self.model.model_name.lower()
         
         if 'vit' in model_name or 'deit' in model_name:
-            # For ViT/DeiT models, use the last transformer block
-            return ['blocks.11.norm1']  # Typical for base models
+            # Dynamically determine last block index
+            if hasattr(self.model.model, 'blocks'):
+                last_idx = len(self.model.model.blocks) - 1
+            else:
+                last_idx = 11  # safe fallback for ViT-Base
+            # Use norm2 (post-attention, pre-MLP) per Chefer et al. CVPR 2021
+            return [f'blocks.{last_idx}.norm2']
         elif 'swin' in model_name:
-            # For Swin models, use the last stage
-            return ['layers.3.blocks.1.norm1']
+            if hasattr(self.model.model, 'layers'):
+                last_layer_idx = len(self.model.model.layers) - 1
+                last_stage = self.model.model.layers[last_layer_idx]
+                last_block_idx = len(last_stage.blocks) - 1
+            else:
+                last_layer_idx, last_block_idx = 3, 1  # fallback
+            return [f'layers.{last_layer_idx}.blocks.{last_block_idx}.norm2']
         else:
             # Fallback - try to find the last normalization layer
             return ['norm']

@@ -225,7 +225,7 @@ def train_meta_learner(
     logger.info(f"Meta-learner training completed")
     logger.info(f"Cross-validation accuracy: {cv_results['cv_mean']:.4f} ± {cv_results['cv_std']:.4f}")
     
-    return meta_learner
+    return meta_learner, cv_results
 
 
 def evaluate_ensemble(
@@ -328,7 +328,7 @@ def main():
     base_model_results = evaluate_base_models(individual_predictions, targets)
     
     # Train meta-learner
-    meta_learner = train_meta_learner(meta_features, targets, config)
+    meta_learner, cv_results = train_meta_learner(meta_features, targets, config)
     
     # Create ensemble
     ensemble = StackedEnsemble(models, meta_learner, device)
@@ -346,7 +346,7 @@ def main():
     results = {
         'base_models': base_model_results,
         'ensemble': ensemble_results,
-        'meta_learner_cv': meta_learner.model.cv_results_ if hasattr(meta_learner.model, 'cv_results_') else None
+        'meta_learner_cv': cv_results
     }
     
     results_path = os.path.join(args.save_dir, 'ensemble_results.yaml')

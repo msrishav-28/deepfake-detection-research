@@ -29,8 +29,8 @@ sys.path.insert(0, str(project_root))
 from deepfake_detection.models.model_factory import ModelFactory, create_deepfake_model
 from deepfake_detection.data.timm_integration import DeepfakeDataModule
 from deepfake_detection.utils.training_utils import (
-    setup_logging, save_checkpoint, load_checkpoint, 
-    calculate_metrics, EarlyStopping
+    setup_logging, set_seed, save_checkpoint, load_checkpoint,
+    calculate_metrics, EarlyStopping, get_llrd_param_groups
 )
 
 logger = logging.getLogger(__name__)
@@ -76,15 +76,20 @@ def train_epoch(
         
         # Backward pass
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
         # Statistics
-        total_loss += loss.item()
+        total_loss += loss.item() * inputs.size(0)  # sample-weighted
         total_samples += inputs.size(0)
         
-        # Calculate accuracy (only for non-mixup batches)
-        if not (mixup_fn is not None and isinstance(targets, tuple)):
-            _, predicted = torch.max(outputs.data, 1)
+        # Calculate accuracy (handle MixUp targets)
+        _, predicted = torch.max(outputs.data, 1)
+        if mixup_fn is not None and isinstance(targets, tuple):
+            targets_a, _, _ = targets
+            # Use primary (dominant-weight) label as accuracy proxy
+            correct_predictions += (predicted == targets_a).sum().item()
+        else:
             correct_predictions += (predicted == targets).sum().item()
         
         # Update progress bar
@@ -93,7 +98,7 @@ def train_epoch(
             'Avg Loss': f'{total_loss / (batch_idx + 1):.4f}'
         })
     
-    avg_loss = total_loss / len(loader)
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
     
     return {
@@ -131,7 +136,7 @@ def validate_epoch(
             loss = criterion(outputs, targets)
             
             # Statistics
-            total_loss += loss.item()
+            total_loss += loss.item() * inputs.size(0)  # sample-weighted
             total_samples += inputs.size(0)
             
             _, predicted = torch.max(outputs.data, 1)
@@ -147,7 +152,7 @@ def validate_epoch(
                 'Avg Loss': f'{total_loss / (batch_idx + 1):.4f}'
             })
     
-    avg_loss = total_loss / len(loader)
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     accuracy = correct_predictions / total_samples
     
     # Calculate detailed metrics
@@ -178,16 +183,38 @@ def train_single_model(
     # Setup training components
     training_config = config['training']['base_models']
     
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=training_config['learning_rate'],
-        weight_decay=training_config['weight_decay']
+    criterion = nn.CrossEntropyLoss(
+        label_smoothing=training_config.get('label_smoothing', 0.1)
     )
     
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    # LLRD optimizer — layer-wise learning rate decay (Bug #5)
+    param_groups = get_llrd_param_groups(
+        model,
+        base_lr=training_config['learning_rate'],
+        layer_decay=training_config.get('layer_decay', 0.75),
+        weight_decay=training_config['weight_decay']
+    )
+    optimizer = torch.optim.AdamW(param_groups)
+    
+    # Warmup + Cosine scheduler (Bug #16)
+    warmup_epochs = training_config.get('warmup_epochs', 5)
+    total_epochs = training_config['epochs']
+    
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer,
-        T_max=training_config['epochs']
+        start_factor=1e-6 / training_config['learning_rate'],
+        end_factor=1.0,
+        total_iters=warmup_epochs
+    )
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=total_epochs - warmup_epochs,
+        eta_min=training_config.get('min_lr', 1e-6)
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_epochs]
     )
     
     # Early stopping
@@ -197,9 +224,10 @@ def train_single_model(
         restore_best_weights=True
     )
     
-    # Get data loaders
+    # Get data loaders — use 'val' split for base model validation (Bug #1)
+    # The holdout set is reserved exclusively for meta-learner training
     train_loader, mixup_fn = data_module.get_loader('train')
-    val_loader, _ = data_module.get_loader('holdout')  # Use holdout for validation
+    val_loader, _ = data_module.get_loader('val')
     
     # Setup logging
     log_dir = os.path.join(save_dir, 'logs', model_type)
@@ -256,7 +284,7 @@ def train_single_model(
             )
         
         # Early stopping check
-        if early_stopping(val_metrics['loss']):
+        if early_stopping(val_metrics['loss'], model):
             logger.info(f"Early stopping triggered for {model_type} at epoch {epoch}")
             break
         

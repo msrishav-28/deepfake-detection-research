@@ -119,3 +119,12 @@ Testing notebook.ipynb
 /*.png
 /*.zip
 /*.tar.*
+
+# Runtime directories — ignore generated content, keep directory structure
+data/*/
+models/*.pth
+models/*/
+results/*/
+!data/.gitkeep
+!models/.gitkeep
+!results/.gitkeep

@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class DataSplitter:
-    """Utility class for splitting datasets into train/holdout/test sets."""
+    """Utility class for splitting datasets into train/val/holdout/test sets."""
     
     def __init__(
         self,
-        train_ratio: float = 0.6,
+        train_ratio: float = 0.5,
+        val_ratio: float = 0.1,
         holdout_ratio: float = 0.2,
         test_ratio: float = 0.2,
         random_seed: int = 42,
@@ -29,16 +30,18 @@ class DataSplitter:
         """
         Args:
             train_ratio: Proportion of data for training base models
+            val_ratio: Proportion of data for base model validation / early stopping
             holdout_ratio: Proportion of data for training meta-learner
             test_ratio: Proportion of data for final evaluation
             random_seed: Random seed for reproducibility
             stratify: Whether to maintain class balance across splits
         """
         # Validate ratios
-        if abs(train_ratio + holdout_ratio + test_ratio - 1.0) > 1e-6:
-            raise ValueError("Train, holdout, and test ratios must sum to 1.0")
+        if abs(train_ratio + val_ratio + holdout_ratio + test_ratio - 1.0) > 1e-6:
+            raise ValueError("Train, val, holdout, and test ratios must sum to 1.0")
         
         self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
         self.holdout_ratio = holdout_ratio
         self.test_ratio = test_ratio
         self.random_seed = random_seed
@@ -53,9 +56,9 @@ class DataSplitter:
         samples: List[str],
         labels: List[int],
         output_dir: str
-    ) -> Tuple[List[str], List[str], List[str]]:
+    ) -> Tuple[List[str], List[str], List[str], List[str]]:
         """
-        Split dataset into train/holdout/test sets.
+        Split dataset into train/val/holdout/test sets.
         
         Args:
             samples: List of sample file paths
@@ -63,13 +66,14 @@ class DataSplitter:
             output_dir: Directory to save split files
             
         Returns:
-            Tuple of (train_files, holdout_files, test_files)
+            Tuple of (train_file, val_file, holdout_file, test_file)
         """
         if len(samples) != len(labels):
             raise ValueError("Number of samples and labels must match")
         
-        logger.info(f"Splitting {len(samples)} samples into train/holdout/test sets")
-        logger.info(f"Ratios: train={self.train_ratio}, holdout={self.holdout_ratio}, test={self.test_ratio}")
+        logger.info(f"Splitting {len(samples)} samples into train/val/holdout/test sets")
+        logger.info(f"Ratios: train={self.train_ratio}, val={self.val_ratio}, "
+                    f"holdout={self.holdout_ratio}, test={self.test_ratio}")
         
         # Convert to numpy arrays for easier manipulation
         samples = np.array(samples)
@@ -77,33 +81,50 @@ class DataSplitter:
         
         # First split: separate test set
         if self.stratify:
-            train_holdout_samples, test_samples, train_holdout_labels, test_labels = train_test_split(
+            remaining_samples, test_samples, remaining_labels, test_labels = train_test_split(
                 samples, labels,
                 test_size=self.test_ratio,
                 random_state=self.random_seed,
                 stratify=labels
             )
         else:
-            train_holdout_samples, test_samples, train_holdout_labels, test_labels = train_test_split(
+            remaining_samples, test_samples, remaining_labels, test_labels = train_test_split(
                 samples, labels,
                 test_size=self.test_ratio,
                 random_state=self.random_seed
             )
         
-        # Second split: separate train and holdout sets
-        holdout_size = self.holdout_ratio / (self.train_ratio + self.holdout_ratio)
+        # Second split: separate holdout set from remaining
+        holdout_size = self.holdout_ratio / (self.train_ratio + self.val_ratio + self.holdout_ratio)
         
         if self.stratify:
-            train_samples, holdout_samples, train_labels, holdout_labels = train_test_split(
-                train_holdout_samples, train_holdout_labels,
+            train_val_samples, holdout_samples, train_val_labels, holdout_labels = train_test_split(
+                remaining_samples, remaining_labels,
                 test_size=holdout_size,
                 random_state=self.random_seed,
-                stratify=train_holdout_labels
+                stratify=remaining_labels
             )
         else:
-            train_samples, holdout_samples, train_labels, holdout_labels = train_test_split(
-                train_holdout_samples, train_holdout_labels,
+            train_val_samples, holdout_samples, train_val_labels, holdout_labels = train_test_split(
+                remaining_samples, remaining_labels,
                 test_size=holdout_size,
+                random_state=self.random_seed
+            )
+        
+        # Third split: separate train and val sets
+        val_size = self.val_ratio / (self.train_ratio + self.val_ratio)
+        
+        if self.stratify:
+            train_samples, val_samples, train_labels, val_labels = train_test_split(
+                train_val_samples, train_val_labels,
+                test_size=val_size,
+                random_state=self.random_seed,
+                stratify=train_val_labels
+            )
+        else:
+            train_samples, val_samples, train_labels, val_labels = train_test_split(
+                train_val_samples, train_val_labels,
+                test_size=val_size,
                 random_state=self.random_seed
             )
         
@@ -112,19 +133,22 @@ class DataSplitter:
         
         # Save split files
         train_file = os.path.join(output_dir, 'train_split.txt')
+        val_file = os.path.join(output_dir, 'val_split.txt')
         holdout_file = os.path.join(output_dir, 'holdout_split.txt')
         test_file = os.path.join(output_dir, 'test_split.txt')
         
         self._save_split_file(train_file, train_samples, train_labels)
+        self._save_split_file(val_file, val_samples, val_labels)
         self._save_split_file(holdout_file, holdout_samples, holdout_labels)
         self._save_split_file(test_file, test_samples, test_labels)
         
         # Log split statistics
         self._log_split_stats(train_samples, train_labels, "Train")
+        self._log_split_stats(val_samples, val_labels, "Val")
         self._log_split_stats(holdout_samples, holdout_labels, "Holdout")
         self._log_split_stats(test_samples, test_labels, "Test")
         
-        return train_file, holdout_file, test_file
+        return train_file, val_file, holdout_file, test_file
     
     def _save_split_file(self, filename: str, samples: np.ndarray, labels: np.ndarray):
         """Save split file with sample paths and labels."""
@@ -157,7 +181,7 @@ class DataSplitter:
         """
         splits = {}
         
-        for split_name in ['train', 'holdout', 'test']:
+        for split_name in ['train', 'val', 'holdout', 'test']:
             split_file = os.path.join(splits_dir, f'{split_name}_split.txt')
             
             if os.path.exists(split_file):
