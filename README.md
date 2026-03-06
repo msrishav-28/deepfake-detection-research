@@ -1,53 +1,67 @@
-# Professional Deepfake Detection Research Framework
+# Deepfake Detection Research Framework
 
-## Executive Summary
+![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-%E2%89%A51.13-EE4C2C?logo=pytorch&logoColor=white)
+![timm](https://img.shields.io/badge/timm-%E2%89%A50.9.2-orange)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-%E2%89%A51.0-F7931E?logo=scikit-learn&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-%E2%89%A54.5-5C3EE8?logo=opencv&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-This repository provides a comprehensive, production-ready framework for deepfake detection research using stacked ensemble learning with Vision Transformers. The system combines three state-of-the-art architectures (ViT, DeiT, Swin) through meta-learning and incorporates explainable AI capabilities for transparent decision-making analysis.
+A production-ready framework for deepfake detection research using stacked ensemble learning with Vision Transformers. The system combines three architectures (ViT, DeiT, Swin) through meta-learning and incorporates Grad-CAM explainability for transparent decision analysis.
+
+---
 
 ## Research Contributions
 
-### 1. Methodological Innovation
-- **Stacked Ensemble Architecture**: Novel application of meta-learning to deepfake detection
-- **Vision Transformer Integration**: Systematic comparison of ViT variants for manipulation detection
-- **Explainable AI Framework**: Grad-CAM based attention visualization for model interpretability
+### Methodological Innovation
+- **Stacked Ensemble Architecture** -- Meta-learning applied to deepfake detection with a logistic regression meta-learner trained on holdout predictions
+- **Vision Transformer Integration** -- Systematic comparison of ViT, DeiT, and Swin variants for facial manipulation detection
+- **Explainable AI Framework** -- Dynamically resolved Grad-CAM attention visualization using post-attention normalization layers
 
-### 2. Empirical Validation
-- **Comprehensive Benchmarking**: Evaluation on FaceForensics++ and CelebDF datasets
-- **Statistical Analysis**: Rigorous performance comparison with significance testing
-- **Cross-Dataset Validation**: Generalization assessment across different manipulation techniques
+### Empirical Validation
+- **Comprehensive Benchmarking** -- Evaluation on FaceForensics++ and CelebDF datasets
+- **Statistical Analysis** -- McNemar's test (Dietterich 1998) for pairwise model comparison
+- **Cross-Dataset Generalization** -- Assessment across different manipulation techniques
 
-### 3. Technical Implementation
-- **Production-Ready Pipeline**: Optimized inference framework with configurable parameters
-- **Reproducible Research**: Standardized evaluation protocols and version-controlled experiments
-- **Scalable Architecture**: Modular design supporting additional models and datasets
+---
 
 ## System Architecture
 
-### Core Components
+```
+Raw Videos --> Face Extraction --> Quality Assessment --> Dataset Creation
+                                                              |
+                              +-------------------------------+
+                              v
+              Base Models (ViT, DeiT, Swin) --> Individual Training
+                              |
+                              v
+                    Holdout Predictions --> Meta-Learner Training
+                              |
+                              v
+              Model Assessment --> Statistical Analysis --> Grad-CAM Explainability
+```
 
-#### 1. Data Processing Pipeline
-```
-Raw Videos → Face Extraction → Quality Assessment → Dataset Creation
-```
-- **Multi-format Support**: MP4, AVI, MOV, GIF processing
-- **Quality-based Filtering**: Automated face quality assessment and selection
-- **Optimized Sampling**: Temporal sampling strategies for video data
+### Data Split Strategy
 
-#### 2. Model Training Framework
-```
-Base Models (ViT, DeiT, Swin) → Individual Training → Ensemble Meta-Learning
-```
-- **Transfer Learning**: Pre-trained Vision Transformer fine-tuning
-- **Stacked Generalization**: Meta-learner training on base model predictions
-- **Hyperparameter Optimization**: Systematic parameter tuning and validation
+The framework uses a strict **4-way split** to prevent holdout contamination:
 
-#### 3. Evaluation System
-```
-Model Assessment → Performance Metrics → Statistical Analysis → Explainability
-```
-- **Comprehensive Metrics**: Accuracy, AUC, F1-score, inference time
-- **Benchmark Reporting**: timm-style CSV outputs and visualization
-- **Explainable AI**: Grad-CAM attention pattern analysis
+| Split | Ratio | Purpose |
+|-------|-------|---------|
+| Train | 50% | Base model training |
+| Val | 10% | Base model early stopping and checkpoint selection |
+| Holdout | 20% | Meta-learner training (never seen by base models) |
+| Test | 20% | Final evaluation |
+
+### Training Features
+
+- **Layer-Wise Learning Rate Decay (LLRD)** for Vision Transformer fine-tuning (BEiT, Bao et al., ICLR 2022)
+- **Warmup + Cosine Annealing** scheduler via `SequentialLR`
+- **Label Smoothing** (default 0.1) in cross-entropy loss
+- **Gradient Clipping** (`max_norm=1.0`) for training stability
+- **MixUp Augmentation** with lambda clamping and local RNG for reproducibility
+- **Real JPEG Compression Simulation** via OpenCV encode/decode round-trip
+
+---
 
 ## Performance Benchmarks
 
@@ -60,175 +74,120 @@ Model Assessment → Performance Metrics → Statistical Analysis → Explainabi
 | Swin-Base | 88.2% | 0.931 | 0.882 | 15.7ms |
 | **Stacked Ensemble** | **89.3%** | **0.946** | **0.893** | **18.2ms** |
 
-### Key Performance Indicators
-- **Ensemble Improvement**: +1.1% accuracy over best individual model
-- **Statistical Significance**: p < 0.05 for ensemble superiority
-- **Inference Efficiency**: <20ms per sample for real-time applications
-- **Cross-Dataset Generalization**: Consistent performance across benchmarks
-
-## Technical Specifications
-
-### Model Architectures
-- **Vision Transformer (ViT-Base)**: 86M parameters, patch-based attention
-- **DeiT-Base**: 86M parameters, distillation-enhanced training
-- **Swin Transformer (Swin-Base)**: 88M parameters, hierarchical attention
-- **Meta-Learner**: Logistic regression with L2 regularization
-
-### Dataset Configuration
-- **FaceForensics++**: 500 videos (100 per category), c23 compression
-- **CelebDF**: Variable size, high-quality celebrity deepfakes
-- **Face Extraction**: 5-10 faces per video, quality threshold 0.3
-- **Data Splits**: 60% train, 20% validation, 20% test
-
-### Computational Requirements
-- **GPU Memory**: 8GB+ recommended for training
-- **Training Time**: 8-12 hours for complete pipeline
-- **Evaluation Time**: 1-2 hours for comprehensive assessment
-- **Storage**: 5-10GB for processed datasets
-
-## Research Workflow
-
-### Phase 1: Data Preparation (1-2 hours)
-```bash
-python scripts/data_preparation/prepare_datasets.py \
-    --config config.yaml \
-    --celebdf-path /path/to/celebdf
-```
-
-### Phase 2: Face Extraction (30-45 minutes)
-```bash
-python scripts/data_preparation/process_deepfake_datasets.py \
-    --dataset both --config config.yaml
-```
-
-### Phase 3: Model Training (8-12 hours)
-```bash
-python scripts/training/train_base_models.py --config config.yaml
-python scripts/training/train_ensemble.py --config config.yaml
-```
-
-### Phase 4: Comprehensive Evaluation (1-2 hours)
-```bash
-python scripts/evaluation/comprehensive_evaluation.py \
-    --config config.yaml \
-    --explainability \
-    --output-dir results/evaluation
-```
-
-### Phase 5: Research Analysis (30 minutes)
-```bash
-jupyter notebook notebooks/analysis.ipynb
-```
-
-## Publication-Ready Outputs
-
-### Academic Materials
-- **Benchmark Tables**: CSV and LaTeX formatted results
-- **Performance Visualizations**: Publication-quality figures
-- **Statistical Analysis**: Significance testing and confidence intervals
-- **Explainability Visualizations**: Grad-CAM attention heatmaps
-
-### Conference Presentation
-- **Methodology Overview**: Stacked ensemble architecture
-- **Empirical Results**: Performance comparison and analysis
-- **Explainable AI**: Model interpretability demonstrations
-- **Future Directions**: Research extensions and applications
-
-### Journal Submission
-- **Comprehensive Evaluation**: Multi-dataset validation
-- **Statistical Validation**: Rigorous performance assessment
-- **Reproducibility**: Complete experimental protocol
-- **Code Availability**: Open-source implementation
-
-## Quality Assurance
-
-### Validation Framework
-- **Reproducible Results**: Fixed random seeds and version control
-- **Statistical Rigor**: Multiple runs with confidence intervals
-- **Cross-Validation**: K-fold validation for robust assessment
-- **Ablation Studies**: Component-wise performance analysis
-
-### Performance Standards
-- **Minimum Accuracy**: >85% on standard benchmarks
-- **Ensemble Improvement**: >1% over best individual model
-- **Inference Efficiency**: <50ms per sample
-- **Statistical Significance**: p < 0.05 for key comparisons
-
-## Research Applications
-
-### Academic Research
-- **Deepfake Detection**: Core manipulation detection research
-- **Ensemble Learning**: Meta-learning methodology development
-- **Explainable AI**: Model interpretability advancement
-- **Computer Vision**: Vision Transformer applications
-
-### Industry Applications
-- **Social Media Platforms**: Automated content moderation
-- **News Verification**: Authentic media validation
-- **Legal Forensics**: Digital evidence analysis
-- **Content Security**: Large-scale manipulation detection
-
-## Future Extensions
-
-### Technical Enhancements
-- **Additional Architectures**: Integration of newer Vision Transformer variants
-- **Advanced Ensembles**: Exploration of neural ensemble methods
-- **Real-time Optimization**: Inference speed improvements
-- **Multi-modal Analysis**: Audio-visual deepfake detection
-
-### Research Directions
-- **Adversarial Robustness**: Defense against adversarial attacks
-- **Domain Adaptation**: Cross-domain generalization
-- **Few-shot Learning**: Limited data scenarios
-- **Continual Learning**: Adaptation to new manipulation techniques
+---
 
 ## Getting Started
 
 ### Prerequisites
+
 - Python 3.8+
-- PyTorch 1.12+
-- CUDA-capable GPU (recommended)
-- 16GB+ RAM
-- 50GB+ storage
+- PyTorch >= 1.13 (required for `SequentialLR`, `LinearLR`, `label_smoothing`)
+- CUDA-capable GPU (8 GB+ VRAM recommended)
+- 16 GB+ RAM
 
 ### Installation
+
 ```bash
-git clone <repository-url>
-cd deepfake-detection-research
+git clone https://github.com/msrishav-28/Deepfake-Detection-Research.git
+cd Deepfake-Detection-Research
 pip install -r requirements.txt
 ```
 
-### Quick Start
-```bash
-# Test system setup
-python test_setup.py
+### Verify Environment
 
-# Prepare datasets
+```bash
+python scripts/check_environment.py
+```
+
+### Research Workflow
+
+```bash
+# 1. Prepare datasets (1-2 hours)
 python scripts/data_preparation/prepare_datasets.py \
     --config config.yaml \
     --celebdf-path /path/to/celebdf
 
-# Run complete pipeline
-python scripts/data_preparation/process_deepfake_datasets.py --dataset both
+# 2. Extract faces from videos (30-45 minutes)
+python scripts/data_preparation/extract_faces_from_videos.py \
+    --config config.yaml
+
+# 3. Create data splits
+python scripts/data_preparation/create_splits.py --config config.yaml
+
+# 4. Train base models (8-12 hours)
 python scripts/training/train_base_models.py --config config.yaml
+
+# 5. Train ensemble meta-learner (30-60 minutes)
 python scripts/training/train_ensemble.py --config config.yaml
-python scripts/evaluation/comprehensive_evaluation.py --config config.yaml --explainability
+
+# 6. Comprehensive evaluation (1-2 hours)
+python scripts/evaluation/comprehensive_evaluation.py \
+    --config config.yaml \
+    --explainability \
+    --output-dir results/evaluation
+
+# 7. Interactive analysis
+jupyter notebook notebooks/analysis.ipynb
 ```
-
-## Support and Documentation
-
-### Documentation
-- **USAGE_GUIDE.md**: Detailed usage instructions
-- **PROFESSIONAL_BENCHMARKING_SYSTEM.md**: Evaluation framework
-- **Configuration Reference**: Parameter documentation
-- **API Documentation**: Code interface specifications
-
-### Research Support
-- **Reproducibility**: Complete experimental protocols
-- **Troubleshooting**: Common issues and solutions
-- **Performance Optimization**: System tuning guidelines
-- **Extension Guidelines**: Framework modification instructions
 
 ---
 
-**This framework provides a complete, professional-grade solution for deepfake detection research, combining methodological rigor with practical implementation for reproducible, publication-ready results.**
+## Project Structure
+
+```
+Deepfake-Detection-Research/
+|-- deepfake_detection/            # Core package
+|   |-- data/                      # Data loading, augmentation, splitting
+|   |-- evaluation/                # Metrics, explainability
+|   |-- models/                    # Model factory, ensemble
+|   +-- utils/                     # Training utilities, seeding, LLRD
+|-- scripts/
+|   |-- data_preparation/          # Dataset download, face extraction, splits
+|   |-- training/                  # Base model and ensemble training
+|   |-- evaluation/                # Benchmarking, evaluation, inference
+|   +-- check_environment.py       # Environment verification
+|-- notebooks/
+|   +-- analysis.ipynb             # Research analysis notebook
+|-- docs/                          # Extended documentation
+|-- data/                          # Runtime data (gitignored)
+|-- models/                        # Saved checkpoints (gitignored)
++-- results/                       # Evaluation outputs (gitignored)
+```
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Quick Start](docs/quick_start.md) | Step-by-step execution guide |
+| [Usage Guide](docs/usage_guide.md) | Detailed pipeline instructions and configuration reference |
+| [Benchmarking System](docs/benchmarking_system.md) | Evaluation framework and publication-ready outputs |
+| [Dataset Specifications](docs/dataset_specifications.md) | FaceForensics++ and CelebDF processing parameters |
+| [Face Extraction](docs/face_extraction.md) | Video-to-face-crop pipeline details |
+| [Scripts Reference](docs/scripts.md) | Script inventory and descriptions |
+| [Notebooks Reference](docs/notebooks.md) | Jupyter notebook contents |
+
+---
+
+## Citation
+
+```bibtex
+@misc{deepfake_detection_ensemble_2025,
+  title   = {Deepfake Detection using Stacked Ensemble of Vision Transformers},
+  author  = {msrishav-28},
+  year    = {2025},
+  howpublished = {\url{https://github.com/msrishav-28/Deepfake-Detection-Research}}
+}
+```
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [PyTorch Image Models (timm)](https://github.com/huggingface/pytorch-image-models) -- Ross Wightman
+- [FaceForensics++](https://github.com/ondyari/FaceForensics) -- Rossler et al.
+- [CelebDF](https://github.com/yuezunli/celeb-deepfakeforensics) -- Li et al.
+- [PyTorch](https://pytorch.org/) and [Hugging Face](https://huggingface.co/) communities

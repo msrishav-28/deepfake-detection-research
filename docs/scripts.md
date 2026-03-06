@@ -1,49 +1,56 @@
-# Scripts Directory
+# Scripts Reference
 
-This directory contains utility scripts for data preparation, training, and evaluation.
+Reference for all executable scripts in the `scripts/` directory.
 
-## Structure
+## Directory Structure
 
 ```
 scripts/
-├── data_preparation/      # Data preprocessing scripts
-│   ├── download_datasets.py
-│   ├── extract_frames.py
-│   ├── face_detection.py
-│   └── create_splits.py
-├── training/             # Training scripts
-│   ├── train_base_models.py
-│   ├── train_ensemble.py
-│   └── hyperparameter_search.py
-├── evaluation/           # Evaluation scripts
-│   ├── evaluate_models.py
-│   ├── generate_gradcam.py
-│   └── benchmark_performance.py
-└── utils/               # Utility scripts
-    ├── model_converter.py
-    ├── data_validator.py
-    └── results_analyzer.py
+|-- check_environment.py                   # Environment verification
+|-- data_preparation/
+|   |-- download_faceforensics.py          # FaceForensics++ downloader
+|   |-- setup_celebdf.py                   # CelebDF directory organizer
+|   |-- prepare_datasets.py               # Combined dataset preparation
+|   |-- extract_faces_from_videos.py       # Video-to-face-crop extraction
+|   +-- create_splits.py                   # Train/val/holdout/test splitting
+|-- training/
+|   |-- train_base_models.py               # ViT, DeiT, Swin fine-tuning
+|   +-- train_ensemble.py                  # Meta-learner training
++-- evaluation/
+    |-- comprehensive_evaluation.py        # Full evaluation with Grad-CAM
+    |-- benchmark_deepfake_models.py       # Benchmarking and CSV export
+    +-- inference_pipeline.py              # Single-image and batch inference
 ```
 
 ## Script Descriptions
 
+### Environment
+
+| Script | Description |
+|--------|-------------|
+| `check_environment.py` | Validates Python version, GPU availability, installed packages, and directory structure. Run this first after installation. |
+
 ### Data Preparation
-- **download_datasets.py**: Download FaceForensics++ and CelebDF datasets
-- **extract_frames.py**: Extract frames from video files
-- **face_detection.py**: Detect and crop faces from frames
-- **create_splits.py**: Create train/holdout/test splits
+
+| Script | Description |
+|--------|-------------|
+| `download_faceforensics.py` | Downloads FaceForensics++ videos (100 per category, c23 compression). Requires access credentials from the dataset authors. |
+| `setup_celebdf.py` | Organizes an existing CelebDF download into `Real/` and `Fake/` subdirectories under `data/raw/celebdf/`. |
+| `prepare_datasets.py` | Combined entry point: downloads FaceForensics++ and organizes CelebDF in a single command. Accepts `--celebdf-path` to point to your local CelebDF copy. |
+| `extract_faces_from_videos.py` | Extracts face crops from video files using OpenCV, MTCNN, or MediaPipe backends. Performs quality assessment and retains the top-N faces per video. |
+| `create_splits.py` | Generates stratified 4-way splits (train 50% / val 10% / holdout 20% / test 20%) and writes split files to `data/splits/`. |
 
 ### Training
-- **train_base_models.py**: Train individual ViT, DeiT, and Swin models
-- **train_ensemble.py**: Train the meta-learner for ensemble
-- **hyperparameter_search.py**: Optimize hyperparameters
+
+| Script | Description |
+|--------|-------------|
+| `train_base_models.py` | Fine-tunes ViT-Base, DeiT-Base, and Swin-Base using LLRD, warmup + cosine scheduler, label smoothing, gradient clipping, and MixUp augmentation. Validates against the `val` split; the `holdout` split is reserved for the meta-learner. |
+| `train_ensemble.py` | Loads trained base models, generates meta-features on the holdout set, trains a logistic regression meta-learner with cross-validation, and saves the stacked ensemble. |
 
 ### Evaluation
-- **evaluate_models.py**: Comprehensive model evaluation
-- **generate_gradcam.py**: Generate Grad-CAM visualizations
-- **benchmark_performance.py**: Performance benchmarking
 
-### Utilities
-- **model_converter.py**: Convert between model formats
-- **data_validator.py**: Validate dataset integrity
-- **results_analyzer.py**: Analyze and summarize results
+| Script | Description |
+|--------|-------------|
+| `comprehensive_evaluation.py` | Runs full evaluation: per-model metrics, ensemble comparison, McNemar's significance test, and optional Grad-CAM explainability visualizations. |
+| `benchmark_deepfake_models.py` | Exports benchmark results in timm-style CSV format with accuracy, AUC, F1, inference time, and throughput. |
+| `inference_pipeline.py` | Runs inference on individual images or directories. Outputs predictions as JSON with optional batch analysis. |

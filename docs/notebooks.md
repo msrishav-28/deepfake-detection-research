@@ -1,53 +1,31 @@
-# Notebooks Directory
+# Notebooks Reference
 
-This directory contains Jupyter notebooks for analysis and experimentation.
+Reference for Jupyter notebooks in the `notebooks/` directory.
 
-## Structure
+## Directory Structure
 
 ```
 notebooks/
-├── analysis.ipynb         # Main research analysis notebook
-├── data_exploration.ipynb # Dataset exploration and visualization
-├── model_training.ipynb   # Model training experiments
-├── ensemble_analysis.ipynb # Ensemble performance analysis
-└── explainability.ipynb   # Grad-CAM and interpretability analysis
++-- analysis.ipynb    # Primary research analysis notebook
 ```
 
-## Notebook Descriptions
+## Notebook Description
 
 ### analysis.ipynb
-The main research notebook containing:
-- Complete methodology documentation
-- Model training and evaluation results
-- Performance comparisons
-- Grad-CAM visualizations
-- Statistical analysis
-- Research conclusions
 
-### data_exploration.ipynb
-Dataset analysis including:
-- Data distribution analysis
-- Sample visualizations
-- Quality assessment
-- Preprocessing pipeline validation
+The main research notebook for interactive exploration of training results, model performance, and explainability outputs. Contents include:
 
-### model_training.ipynb
-Training experiments for:
-- Individual model fine-tuning
-- Hyperparameter optimization
-- Training curve analysis
-- Model validation
+- **Methodology Documentation** -- Overview of the stacked ensemble architecture and training protocol
+- **Training Curve Analysis** -- Loss and accuracy progression across epochs for each base model
+- **Performance Comparison** -- Side-by-side metrics (accuracy, AUC, F1, precision, recall) for ViT, DeiT, Swin, and the stacked ensemble
+- **Statistical Analysis** -- McNemar's test results for pairwise model significance testing
+- **Grad-CAM Visualizations** -- Attention heatmaps showing where each architecture focuses when classifying real vs. fake faces
+- **Research Conclusions** -- Summary of findings and directions for future work
 
-### ensemble_analysis.ipynb
-Ensemble method analysis:
-- Meta-learner training
-- Stacking performance evaluation
-- Model combination strategies
-- Ensemble interpretability
+### Usage
 
-### explainability.ipynb
-Explainable AI analysis:
-- Grad-CAM heatmap generation
-- Feature importance analysis
-- Model decision visualization
-- Comparative interpretability study
+```bash
+jupyter notebook notebooks/analysis.ipynb
+```
+
+> **Note:** Notebook outputs are automatically stripped on commit via `nbstripout`. Re-run all cells after cloning to regenerate outputs.

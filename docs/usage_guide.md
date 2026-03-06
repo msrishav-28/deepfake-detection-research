@@ -1,89 +1,66 @@
-# Deepfake Detection Research - Usage Guide
+# Usage Guide
 
-This guide provides step-by-step instructions for running the complete deepfake detection research pipeline.
+Detailed instructions for configuring and running the deepfake detection research pipeline.
+
+---
 
 ## Prerequisites
 
 ### System Requirements
-- Python 3.8+
-- CUDA-capable GPU (recommended, 8GB+ VRAM)
-- 32GB+ RAM (recommended)
-- 100GB+ free disk space
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| Python | 3.8+ | 3.10+ |
+| PyTorch | >= 1.13 | >= 2.0 |
+| GPU VRAM | 4 GB | 8 GB+ |
+| RAM | 16 GB | 32 GB |
+| Disk Space | 50 GB | 100 GB |
 
 ### Installation
 
-1. **Clone the repository**
 ```bash
-git clone https://github.com/your-username/deepfake-detection-research.git
-cd deepfake-detection-research
-```
-
-2. **Install dependencies**
-```bash
+git clone https://github.com/msrishav-28/Deepfake-Detection-Research.git
+cd Deepfake-Detection-Research
 pip install -r requirements.txt
+python scripts/check_environment.py
 ```
 
-3. **Verify installation**
-```bash
-python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
-```
+---
 
-## Complete Pipeline Execution
+## Complete Pipeline
 
 ### Step 1: Data Preparation
 
-#### **Automated Dataset Preparation (Recommended)**
+**Automated preparation (recommended):**
 
-1. **Get FaceForensics++ Access**
-   - Fill out the form at: https://github.com/ondyari/FaceForensics
-   - You'll receive download credentials
-
-2. **Prepare Both Datasets**
 ```bash
-# Replace /path/to/your/celebdf with your actual CelebDF path
 python scripts/data_preparation/prepare_datasets.py \
     --config config.yaml \
     --celebdf-path /path/to/your/celebdf
 ```
 
-This script will:
-- Download 100 videos from each FaceForensics++ category (Original, Deepfakes, Face2Face, FaceSwap, NeuralTextures)
-- Organize your existing CelebDF dataset into Real/Fake categories
-- Create proper directory structure
+This script downloads FaceForensics++ (100 videos per category, c23 compression) and organizes CelebDF into `Real/Fake` directories.
 
-#### **Manual Dataset Preparation (Alternative)**
+**Manual preparation (alternative):**
 
-1. **Download FaceForensics++ (100 videos per category)**
 ```bash
+# Download FaceForensics++ (requires access credentials)
 python scripts/data_preparation/download_faceforensics.py data/raw/faceforensics
-```
 
-2. **Setup CelebDF Dataset**
-```bash
+# Organize CelebDF
 python scripts/data_preparation/setup_celebdf.py /path/to/your/celebdf data/raw/celebdf
-```
 
-3. **Extract frames from videos**
-```bash
-python scripts/data_preparation/extract_frames.py --config config.yaml
-```
+# Extract face crops from videos
+python scripts/data_preparation/extract_faces_from_videos.py --config config.yaml
 
-4. **Detect and crop faces**
-```bash
-python scripts/data_preparation/face_detection.py --config config.yaml
-```
-
-5. **Create data splits**
-```bash
+# Create stratified data splits
 python scripts/data_preparation/create_splits.py --config config.yaml
 ```
 
 ### Step 2: Train Base Models
 
-Train all three Vision Transformer models:
-
 ```bash
-# Train all models (recommended)
+# Train all three models
 python scripts/training/train_base_models.py --config config.yaml
 
 # Or train individually
@@ -92,7 +69,7 @@ python scripts/training/train_base_models.py --model deit --config config.yaml
 python scripts/training/train_base_models.py --model swin --config config.yaml
 ```
 
-**Expected training time:** 4-8 hours per model on modern GPU
+**Expected training time:** 4--8 hours per model on a modern GPU.
 
 ### Step 3: Train Ensemble Meta-Learner
 
@@ -100,46 +77,30 @@ python scripts/training/train_base_models.py --model swin --config config.yaml
 python scripts/training/train_ensemble.py --config config.yaml
 ```
 
-**Expected training time:** 30-60 minutes
+**Expected training time:** 30--60 minutes.
 
-### Step 4: Comprehensive Evaluation
+### Step 4: Evaluation
 
 ```bash
-python scripts/evaluation/evaluate_models.py --config config.yaml --explainability
+python scripts/evaluation/comprehensive_evaluation.py \
+    --config config.yaml \
+    --explainability \
+    --output-dir results/evaluation
 ```
 
-**Expected evaluation time:** 1-2 hours
+**Expected evaluation time:** 1--2 hours.
 
-### Step 5: Analysis and Visualization
-
-Open and run the Jupyter notebook:
+### Step 5: Analysis
 
 ```bash
 jupyter notebook notebooks/analysis.ipynb
 ```
 
-## Quick Start (Using Pre-trained Models)
-
-If you have pre-trained model weights:
-
-1. **Place model weights in the correct directories:**
-   - `models/base_models/vit.pth`
-   - `models/base_models/deit.pth`
-   - `models/base_models/swin.pth`
-
-2. **Train ensemble meta-learner:**
-```bash
-python scripts/training/train_ensemble.py --config config.yaml
-```
-
-3. **Run evaluation:**
-```bash
-python scripts/evaluation/evaluate_models.py --config config.yaml --explainability
-```
+---
 
 ## Inference on New Data
 
-### Single Image Prediction
+### Single Image
 
 ```bash
 python scripts/evaluation/inference_pipeline.py \
@@ -159,11 +120,14 @@ python scripts/evaluation/inference_pipeline.py \
     --analyze
 ```
 
-## Configuration
+---
 
-The main configuration file is `config.yaml`. Key settings:
+## Configuration Reference
+
+The main configuration file is `config.yaml`. Key sections:
 
 ### Model Configuration
+
 ```yaml
 models:
   base_models:
@@ -182,6 +146,7 @@ models:
 ```
 
 ### Training Configuration
+
 ```yaml
 training:
   base_models:
@@ -189,117 +154,78 @@ training:
     batch_size: 32
     learning_rate: 1e-4
     weight_decay: 1e-5
+    label_smoothing: 0.1        # Cross-entropy label smoothing
+    layer_decay: 0.75           # LLRD decay factor
+    warmup_epochs: 5            # Linear warmup before cosine decay
+    min_lr: 1e-6                # Cosine annealing floor
 ```
 
-### Data Configuration
+### Data Split Configuration
+
 ```yaml
 data:
   splits:
-    train_ratio: 0.6
-    holdout_ratio: 0.2
-    test_ratio: 0.2
+    train_ratio: 0.5            # Base model training
+    val_ratio: 0.1              # Base model early stopping
+    holdout_ratio: 0.2          # Meta-learner training
+    test_ratio: 0.2             # Final evaluation
     random_seed: 42
 ```
 
+---
+
+## File Structure After Completion
+
+```
+Deepfake-Detection-Research/
+|-- data/
+|   |-- raw/                   # Original video datasets
+|   |-- processed/             # Extracted face crops
+|   +-- splits/                # Split definition files
+|-- models/
+|   |-- base_models/           # Trained model weights
+|   |   |-- vit.pth
+|   |   |-- deit.pth
+|   |   +-- swin.pth
+|   +-- ensemble/              # Meta-learner and ensemble config
+|       |-- meta_learner.pkl
+|       +-- ensemble_config.pkl
+|-- results/
+|   +-- evaluation/            # Evaluation outputs
+|       |-- model_comparison.csv
+|       |-- detailed_results.json
+|       +-- explainability/    # Grad-CAM heatmaps
++-- notebooks/
+    +-- analysis.ipynb         # Research analysis
+```
+
+---
+
 ## Troubleshooting
 
-### Common Issues
+| Issue | Solution |
+|-------|----------|
+| CUDA out of memory | Reduce `batch_size` in `config.yaml`; enable mixed precision |
+| Dataset not found | Verify `data/` directory structure; check that splits exist |
+| Model loading errors | Confirm checkpoint paths; verify architecture compatibility |
+| Slow training | Use larger batch size if memory allows; reduce image resolution |
+| Memory pressure | Enable gradient checkpointing; reduce number of data loader workers |
 
-1. **CUDA Out of Memory**
-   - Reduce batch size in `config.yaml`
-   - Use gradient accumulation
-   - Enable mixed precision training
-
-2. **Dataset Not Found**
-   - Verify data directory structure
-   - Check file permissions
-   - Ensure data splits are created
-
-3. **Model Loading Errors**
-   - Check model checkpoint paths
-   - Verify model architecture compatibility
-   - Ensure all dependencies are installed
-
-### Performance Optimization
-
-1. **Training Speed**
-   - Use larger batch sizes if memory allows
-   - Enable mixed precision training
-   - Use multiple GPUs with DataParallel
-
-2. **Memory Usage**
-   - Reduce image resolution
-   - Use gradient checkpointing
-   - Optimize data loading with more workers
-
-## Expected Results
-
-### Performance Benchmarks
-
-Based on FaceForensics++ dataset:
-
-| Model | Accuracy | Precision | Recall | F1-Score |
-|-------|----------|-----------|--------|----------|
-| ViT   | 0.85-0.90| 0.84-0.89 | 0.86-0.91| 0.85-0.90|
-| DeiT  | 0.84-0.89| 0.83-0.88 | 0.85-0.90| 0.84-0.89|
-| Swin  | 0.86-0.91| 0.85-0.90 | 0.87-0.92| 0.86-0.91|
-| **Ensemble** | **0.88-0.93**| **0.87-0.92** | **0.89-0.94**| **0.88-0.93**|
-
-*Note: Actual results may vary based on dataset quality and training conditions.*
-
-### File Structure After Completion
-
-```
-deepfake-detection-research/
-├── data/
-│   ├── processed/          # Processed images
-│   ├── splits/            # Data split files
-│   └── raw/               # Original datasets
-├── models/
-│   ├── base_models/       # Trained model weights
-│   │   ├── vit.pth
-│   │   ├── deit.pth
-│   │   └── swin.pth
-│   └── ensemble/          # Ensemble components
-│       ├── meta_learner.pkl
-│       └── ensemble_config.pkl
-├── results/
-│   └── evaluation/        # Evaluation results
-│       ├── model_comparison.csv
-│       ├── detailed_results.json
-│       └── explainability/
-└── notebooks/
-    └── analysis.ipynb     # Research analysis
-```
+---
 
 ## Citation
 
-If you use this code in your research, please cite:
-
 ```bibtex
 @misc{deepfake_detection_ensemble_2025,
-  title={Deepfake Detection using Stacked Ensemble of Vision Transformers},
-   author={msrishav-28},
-  year={2025},
-   howpublished={\url{https://github.com/msrishav-28/Deepfake-Detection-Research}}
+  title   = {Deepfake Detection using Stacked Ensemble of Vision Transformers},
+  author  = {msrishav-28},
+  year    = {2025},
+  howpublished = {\url{https://github.com/msrishav-28/Deepfake-Detection-Research}}
 }
 ```
 
-## Support
-
-For issues and questions:
-1. Check the troubleshooting section above
-2. Review the configuration settings
-3. Open an issue on GitHub with detailed error messages
-4. Include system specifications and dataset information
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
 ## Acknowledgments
 
-- PyTorch Image Models (timm) library
-- FaceForensics++ dataset creators
-- CelebDF dataset creators
-- PyTorch and Hugging Face communities
+- [PyTorch Image Models (timm)](https://github.com/huggingface/pytorch-image-models) -- Ross Wightman
+- [FaceForensics++](https://github.com/ondyari/FaceForensics) -- Rossler et al.
+- [CelebDF](https://github.com/yuezunli/celeb-deepfakeforensics) -- Li et al.
