@@ -1,0 +1,25 @@
+torch>=1.7
+torchvision
+pyyaml
+huggingface_hub
+safetensors>=0.2
+numpy
+
+# Deepfake Detection Research Dependencies
+scikit-learn>=1.0.0
+pytorch-grad-cam>=1.4.0
+seaborn>=0.11.0
+matplotlib>=3.5.0
+jupyter>=1.0.0
+opencv-python>=4.5.0
+pandas>=1.3.0
+tqdm>=4.60.0
+
+# Face detection dependencies (optional - install as needed)
+# For MTCNN face detection (higher accuracy):
+# facenet-pytorch>=2.5.0
+
+# For MediaPipe face detection (Google's solution):
+# mediapipe>=0.10.0
+
+# Note: OpenCV (included above) provides basic face detection
