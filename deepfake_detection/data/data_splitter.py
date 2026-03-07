@@ -1,13 +1,14 @@
 """
 Data splitting utilities for deepfake detection.
 
-This module provides functionality to split datasets into train/holdout/test sets
+This module provides functionality to split datasets into train/val/holdout/test sets
 with proper stratification and reproducibility.
 """
 
 import os
 import random
 import numpy as np
+import torch
 from typing import List, Tuple, Dict, Any
 from sklearn.model_selection import train_test_split
 import logging
@@ -47,9 +48,11 @@ class DataSplitter:
         self.random_seed = random_seed
         self.stratify = stratify
         
-        # Set random seeds for reproducibility
+        # Set random seeds for reproducibility (BUG 32: also seed PyTorch)
         random.seed(random_seed)
         np.random.seed(random_seed)
+        torch.manual_seed(random_seed)
+        torch.cuda.manual_seed_all(random_seed)
     
     def split_dataset(
         self,
@@ -95,37 +98,39 @@ class DataSplitter:
             )
         
         # Second split: separate holdout set from remaining
+        # BUG 27: use seed+1 to avoid correlated partitions with the first split
         holdout_size = self.holdout_ratio / (self.train_ratio + self.val_ratio + self.holdout_ratio)
         
         if self.stratify:
             train_val_samples, holdout_samples, train_val_labels, holdout_labels = train_test_split(
                 remaining_samples, remaining_labels,
                 test_size=holdout_size,
-                random_state=self.random_seed,
+                random_state=self.random_seed + 1,
                 stratify=remaining_labels
             )
         else:
             train_val_samples, holdout_samples, train_val_labels, holdout_labels = train_test_split(
                 remaining_samples, remaining_labels,
                 test_size=holdout_size,
-                random_state=self.random_seed
+                random_state=self.random_seed + 1
             )
         
         # Third split: separate train and val sets
+        # BUG 27: use seed+2 to avoid correlated partitions with previous splits
         val_size = self.val_ratio / (self.train_ratio + self.val_ratio)
         
         if self.stratify:
             train_samples, val_samples, train_labels, val_labels = train_test_split(
                 train_val_samples, train_val_labels,
                 test_size=val_size,
-                random_state=self.random_seed,
+                random_state=self.random_seed + 2,
                 stratify=train_val_labels
             )
         else:
             train_samples, val_samples, train_labels, val_labels = train_test_split(
                 train_val_samples, train_val_labels,
                 test_size=val_size,
-                random_state=self.random_seed
+                random_state=self.random_seed + 2
             )
         
         # Create output directory if it doesn't exist
@@ -218,7 +223,8 @@ class DataSplitter:
         Returns:
             True if all splits are valid, False otherwise
         """
-        required_files = ['train_split.txt', 'holdout_split.txt', 'test_split.txt']
+        # BUG 28: also require val_split.txt
+        required_files = ['train_split.txt', 'val_split.txt', 'holdout_split.txt', 'test_split.txt']
         
         for filename in required_files:
             filepath = os.path.join(splits_dir, filename)
@@ -242,7 +248,8 @@ def create_balanced_splits(
     data_dir: str,
     categories: List[str],
     output_dir: str,
-    train_ratio: float = 0.6,
+    train_ratio: float = 0.5,
+    val_ratio: float = 0.1,
     holdout_ratio: float = 0.2,
     test_ratio: float = 0.2,
     random_seed: int = 42
@@ -255,12 +262,14 @@ def create_balanced_splits(
         categories: List of data categories
         output_dir: Directory to save split files
         train_ratio: Training set ratio
+        val_ratio: Validation set ratio
         holdout_ratio: Holdout set ratio
         test_ratio: Test set ratio
         random_seed: Random seed for reproducibility
     """
     splitter = DataSplitter(
         train_ratio=train_ratio,
+        val_ratio=val_ratio,
         holdout_ratio=holdout_ratio,
         test_ratio=test_ratio,
         random_seed=random_seed,

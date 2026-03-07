@@ -129,12 +129,15 @@ class ViTModel(BaseDeepfakeModel):
         Returns:
             Attention maps tensor
         """
-        # This is a simplified implementation
-        # In practice, you'd need to hook into the attention layers
+        # BUG 08: This is a placeholder implementation. Real attention
+        # extraction requires hooks into the attention layers. Log a warning
+        # so callers know these are NOT real attention maps.
+        logger.warning(
+            f"get_attention_maps() returns placeholder zeros for {self.model_name}. "
+            "Hook-based extraction is required for real attention maps."
+        )
         with torch.no_grad():
             _ = self.model(x)
-            # Return dummy attention maps for now
-            # Real implementation would require modifying the forward pass
             batch_size = x.size(0)
             num_heads = 12  # Typical for base models
             seq_len = (224 // 16) ** 2 + 1  # Patches + CLS token
@@ -271,7 +274,7 @@ def load_model_weights(
     """
     logger.info(f"Loading weights from {checkpoint_path}")
     
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     
     # Handle different checkpoint formats
     if 'model' in checkpoint:

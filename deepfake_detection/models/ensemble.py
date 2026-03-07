@@ -235,8 +235,8 @@ class StackedEnsemble(nn.Module):
         # Get meta-learner predictions
         ensemble_probs = self.meta_learner.predict_proba(meta_features)
         
-        # Convert back to torch tensor
-        return torch.tensor(ensemble_probs, dtype=torch.float32, device=self.device)
+        # BUG 10: Use from_numpy to avoid data copy and deprecation warning
+        return torch.from_numpy(ensemble_probs).float().to(self.device)
     
     def _average_predictions(self, inputs: torch.Tensor) -> torch.Tensor:
         """Average predictions from all base models."""
@@ -356,13 +356,18 @@ class StackedEnsemble(nn.Module):
         for model_name in config['model_names']:
             model_path = os.path.join(save_dir, f'{model_name}.pth')
             if os.path.exists(model_path):
-                self.base_models[model_name].load_state_dict(torch.load(model_path))
+                # BUG 17: add weights_only=False for pickle-based checkpoints
+                self.base_models[model_name].load_state_dict(
+                    torch.load(model_path, weights_only=False)
+                )
         
         # Load meta-learner
         meta_learner_path = os.path.join(save_dir, 'meta_learner.pkl')
         if os.path.exists(meta_learner_path):
             if self.meta_learner is None:
-                self.meta_learner = MetaLearner()
+                # BUG 17: read model_type from saved config if available
+                model_type = config.get('meta_learner_type', 'logistic_regression')
+                self.meta_learner = MetaLearner(model_type=model_type)
             self.meta_learner.load(meta_learner_path)
         
         logger.info(f"Ensemble loaded from {save_dir}")

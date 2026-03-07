@@ -29,8 +29,9 @@ sys.path.insert(0, str(project_root))
 
 from deepfake_detection.models.ensemble import StackedEnsemble
 from deepfake_detection.data.datasets import FaceForensicsDataset, CelebDFDataset
-from deepfake_detection.evaluation.metrics import DeepfakeMetrics
-from deepfake_detection.utils.model_utils import load_model_weights
+from deepfake_detection.evaluation.metrics import EvaluationMetrics
+from deepfake_detection.models.base_models import load_model_weights, create_base_model
+from deepfake_detection.models.model_factory import ModelFactory
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,7 +53,7 @@ class DeepfakeBenchmark:
         self.results = {}
         
         # Initialize metrics calculator
-        self.metrics = DeepfakeMetrics()
+        self.metrics = EvaluationMetrics()
         
         logger.info(f"Benchmark initialized on device: {self.device}")
     
@@ -68,7 +69,9 @@ class DeepfakeBenchmark:
             model_path = model_dir / 'base_models' / f'{model_name}_best.pth'
             if model_path.exists():
                 try:
-                    model = load_model_weights(model_name, str(model_path), self.device)
+                    factory = ModelFactory(self.config)
+                    model = factory.create_model(model_name, self.device)
+                    model = load_model_weights(model, str(model_path))
                     model.eval()
                     models[f'base_{model_name}'] = model
                     logger.info(f"✅ Loaded base model: {model_name}")
@@ -78,14 +81,14 @@ class DeepfakeBenchmark:
                 logger.warning(f"⚠️  Model not found: {model_path}")
         
         # Load ensemble model
-        ensemble_path = model_dir / 'ensemble' / 'stacked_ensemble.pth'
-        if ensemble_path.exists():
+        ensemble_dir = model_dir / 'ensemble'
+        if ensemble_dir.exists():
             try:
                 ensemble = StackedEnsemble(
-                    base_models=list(models.values()),
-                    meta_learner_type='logistic_regression'
+                    base_models={k.replace('base_', ''): v for k, v in models.items() if k.startswith('base_')},
+                    device=self.device
                 )
-                ensemble.load_state_dict(torch.load(ensemble_path, map_location=self.device))
+                ensemble.load_ensemble(str(ensemble_dir))
                 ensemble.eval()
                 models['ensemble'] = ensemble
                 logger.info("✅ Loaded ensemble model")
@@ -178,7 +181,9 @@ class DeepfakeBenchmark:
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 
-                # Measure inference time
+                # Measure inference time (BUG 24: sync GPU for accurate timing)
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
                 start_time = time.time()
                 
                 if 'ensemble' in model_name:
@@ -187,6 +192,8 @@ class DeepfakeBenchmark:
                 else:
                     outputs = model(images)
                 
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
                 end_time = time.time()
                 
                 # Calculate probabilities and predictions
@@ -212,7 +219,7 @@ class DeepfakeBenchmark:
         metrics_result = self.metrics.calculate_all_metrics(
             y_true=all_labels,
             y_pred=all_predictions,
-            y_prob=all_probabilities
+            y_proba=np.array(all_probabilities)
         )
         
         # Add timing information
@@ -225,7 +232,7 @@ class DeepfakeBenchmark:
         
         logger.info(f"✅ {model_name} on {dataset_name}: "
                    f"Accuracy={metrics_result['accuracy']:.4f}, "
-                   f"AUC={metrics_result['auc']:.4f}, "
+                   f"AUC={metrics_result['auc_roc']:.4f}, "
                    f"Inference={metrics_result['avg_inference_time_ms']:.2f}ms")
         
         return metrics_result
@@ -298,8 +305,8 @@ class DeepfakeBenchmark:
                         'accuracy': metrics.get('accuracy', 0),
                         'precision': metrics.get('precision', 0),
                         'recall': metrics.get('recall', 0),
-                        'f1_score': metrics.get('f1_score', 0),
-                        'auc': metrics.get('auc', 0),
+                        'f1': metrics.get('f1', 0),
+                        'auc_roc': metrics.get('auc_roc', 0),
                         'avg_inference_time_ms': metrics.get('avg_inference_time_ms', 0),
                         'throughput_samples_per_sec': metrics.get('throughput_samples_per_sec', 0),
                         'total_samples': metrics.get('total_samples', 0)
@@ -308,7 +315,7 @@ class DeepfakeBenchmark:
         df = pd.DataFrame(summary_data)
         
         # Sort by AUC score (descending)
-        df = df.sort_values(['dataset', 'auc'], ascending=[True, False])
+        df = df.sort_values(['dataset', 'auc_roc'], ascending=[True, False]) if 'auc_roc' in df.columns else df
         
         # Save CSV
         csv_file = output_dir / 'deepfake_benchmark_summary.csv'
@@ -329,8 +336,8 @@ class DeepfakeBenchmark:
                         'Accuracy': f"{metrics.get('accuracy', 0):.4f}",
                         'Precision': f"{metrics.get('precision', 0):.4f}",
                         'Recall': f"{metrics.get('recall', 0):.4f}",
-                        'F1-Score': f"{metrics.get('f1_score', 0):.4f}",
-                        'AUC': f"{metrics.get('auc', 0):.4f}",
+                        'F1-Score': f"{metrics.get('f1', 0):.4f}",
+                        'AUC': f"{metrics.get('auc_roc', 0):.4f}",
                         'Inference (ms)': f"{metrics.get('avg_inference_time_ms', 0):.2f}",
                         'Throughput (samples/s)': f"{metrics.get('throughput_samples_per_sec', 0):.1f}"
                     })
@@ -378,13 +385,13 @@ class DeepfakeBenchmark:
                     })
                     
                     # Update dataset best
-                    if metrics.get('auc', 0) > analysis['dataset_analysis'][dataset_name]['best_auc']:
-                        analysis['dataset_analysis'][dataset_name]['best_auc'] = metrics.get('auc', 0)
+                    if metrics.get('auc_roc', 0) > analysis['dataset_analysis'][dataset_name]['best_auc']:
+                        analysis['dataset_analysis'][dataset_name]['best_auc'] = metrics.get('auc_roc', 0)
                         analysis['dataset_analysis'][dataset_name]['best_model'] = model_name
                     
                     # Update overall best
-                    if metrics.get('auc', 0) > analysis['benchmark_summary']['best_auc']:
-                        analysis['benchmark_summary']['best_auc'] = metrics.get('auc', 0)
+                    if metrics.get('auc_roc', 0) > analysis['benchmark_summary']['best_auc']:
+                        analysis['benchmark_summary']['best_auc'] = metrics.get('auc_roc', 0)
                         analysis['benchmark_summary']['best_overall_model'] = f"{model_name} on {dataset_name}"
                     
                     if metrics.get('accuracy', 0) > analysis['benchmark_summary']['best_accuracy']:

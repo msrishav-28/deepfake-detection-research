@@ -104,7 +104,7 @@ def load_checkpoint(
     if device is None:
         device = torch.device('cpu')
     
-    checkpoint = torch.load(filepath, map_location=device)
+    checkpoint = torch.load(filepath, map_location=device, weights_only=False)
     
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -258,7 +258,14 @@ def get_llrd_param_groups(
     """
     # Determine total number of transformer blocks
     inner = model.model if hasattr(model, 'model') else model
-    num_blocks = len(inner.blocks) if hasattr(inner, 'blocks') else 12
+    # BUG 06: Swin uses `layers` with nested `blocks`, not a flat `blocks`
+    if hasattr(inner, 'blocks'):
+        num_blocks = len(inner.blocks)
+    elif hasattr(inner, 'layers'):
+        # Swin Transformer: sum blocks across all stages
+        num_blocks = sum(len(stage.blocks) for stage in inner.layers)
+    else:
+        num_blocks = 12  # safe fallback
     num_layers = num_blocks + 2  # +1 for embedding, +1 for head
 
     param_groups = []
@@ -275,8 +282,19 @@ def get_llrd_param_groups(
         elif any(k in name for k in ('head', 'classifier', 'fc_norm')):
             layer_id = num_layers - 1
         else:
+            # BUG 06: handle both `blocks.N` (ViT/DeiT) and `layers.N.blocks.M` (Swin)
             m = re.search(r'blocks\.(\d+)\.', name)
-            layer_id = (int(m.group(1)) + 1) if m else num_layers // 2
+            m_swin = re.search(r'layers\.(\d+)\.blocks\.(\d+)\.', name)
+            if m_swin and hasattr(inner, 'layers'):
+                stage_idx = int(m_swin.group(1))
+                block_idx = int(m_swin.group(2))
+                # Compute absolute block index across all stages
+                abs_idx = sum(len(inner.layers[s].blocks) for s in range(stage_idx)) + block_idx
+                layer_id = abs_idx + 1  # +1 for embedding layer
+            elif m:
+                layer_id = int(m.group(1)) + 1
+            else:
+                layer_id = num_layers // 2
 
         lr_scale = layer_decay ** (num_layers - layer_id - 1)
         param_groups.append({

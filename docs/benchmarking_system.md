@@ -31,7 +31,7 @@ python scripts/evaluation/comprehensive_evaluation.py \
 ### CSV Output (timm-style)
 
 ```csv
-model,dataset,accuracy,precision,recall,f1_score,auc,avg_inference_time_ms,throughput_samples_per_sec,total_samples
+model,dataset,accuracy,precision,recall,f1,auc_roc,avg_inference_time_ms,throughput_samples_per_sec,total_samples
 Vision Transformer (ViT-Base),faceforensics,0.8750,0.8654,0.8846,0.8749,0.9234,12.5,80.0,2500
 Data-efficient Image Transformer (DeiT-Base),faceforensics,0.8692,0.8598,0.8788,0.8692,0.9187,8.3,120.5,2500
 Swin Transformer (Swin-Base),faceforensics,0.8821,0.8734,0.8909,0.8821,0.9312,15.7,63.7,2500

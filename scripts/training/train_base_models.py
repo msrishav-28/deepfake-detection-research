@@ -95,7 +95,8 @@ def train_epoch(
         # Update progress bar
         progress_bar.set_postfix({
             'Loss': f'{loss.item():.4f}',
-            'Avg Loss': f'{total_loss / (batch_idx + 1):.4f}'
+            # BUG 16: divide by total_samples, not batch count
+            'Avg Loss': f'{total_loss / total_samples:.4f}'
         })
     
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
@@ -236,6 +237,7 @@ def train_single_model(
     
     # Training loop
     best_val_acc = 0.0
+    best_val_loss = float('inf')  # BUG 09: track best val_loss for checkpoint
     training_history = {
         'train_loss': [],
         'train_acc': [],
@@ -275,15 +277,16 @@ def train_single_model(
         training_history['val_acc'].append(val_metrics['accuracy'])
         training_history['learning_rates'].append(current_lr)
         
-        # Save best model
-        if val_metrics['accuracy'] > best_val_acc:
+        # BUG 09: Save best model based on val_loss (consistent with early stopping)
+        if val_metrics['loss'] < best_val_loss:
+            best_val_loss = val_metrics['loss']
             best_val_acc = val_metrics['accuracy']
             model_save_path = os.path.join(save_dir, f'{model_type}.pth')
             save_checkpoint(
                 model, optimizer, epoch, val_metrics, model_save_path
             )
         
-        # Early stopping check
+        # Early stopping check (also monitors val_loss)
         if early_stopping(val_metrics['loss'], model):
             logger.info(f"Early stopping triggered for {model_type} at epoch {epoch}")
             break
@@ -337,6 +340,9 @@ def main():
     
     # Setup logging
     setup_logging()
+    
+    # BUG 12: set_seed is imported but never called — must seed before any work
+    set_seed(config.get('seed', 42))
     
     # Set device
     if args.device == 'auto':

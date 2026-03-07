@@ -70,8 +70,10 @@ class DeepfakeInferencePipeline:
         factory = ModelFactory(self.config)
         base_models = factory.create_all_base_models(self.device)
         
-        # Create ensemble
-        self.ensemble = StackedEnsemble(base_models, device=self.device)
+        # Create ensemble (BUG 35: ensure base_models is a dict)
+        if not isinstance(base_models, dict):
+            raise TypeError("ModelFactory.create_all_base_models must return a dict, got " + type(base_models).__name__)
+        self.ensemble = StackedEnsemble(base_models=base_models, device=self.device)
         
         # Load ensemble weights and meta-learner
         self.ensemble.load_ensemble(self.ensemble_dir)

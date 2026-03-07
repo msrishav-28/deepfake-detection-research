@@ -112,6 +112,7 @@ def create_splits_for_dataset(
     data_config = config['data']
     splitter = DataSplitter(
         train_ratio=data_config['splits']['train_ratio'],
+        val_ratio=data_config['splits'].get('val_ratio', 0.1),
         holdout_ratio=data_config['splits']['holdout_ratio'],
         test_ratio=data_config['splits']['test_ratio'],
         random_seed=data_config['splits']['random_seed'],
@@ -122,13 +123,14 @@ def create_splits_for_dataset(
     dataset_output_dir = os.path.join(output_dir, dataset_type)
     os.makedirs(dataset_output_dir, exist_ok=True)
     
-    # Create splits
-    train_file, holdout_file, test_file = splitter.split_dataset(
+    # Create splits (BUG 36: unpack 4-tuple)
+    train_file, val_file, holdout_file, test_file = splitter.split_dataset(
         samples, labels, dataset_output_dir
     )
     
     logger.info(f"Created splits for {dataset_type}:")
     logger.info(f"  Train: {train_file}")
+    logger.info(f"  Val: {val_file}")
     logger.info(f"  Holdout: {holdout_file}")
     logger.info(f"  Test: {test_file}")
     
@@ -157,7 +159,7 @@ def merge_dataset_splits(
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    for split_name in ['train', 'holdout', 'test']:
+    for split_name in ['train', 'val', 'holdout', 'test']:
         merged_samples = []
         merged_labels = []
         
@@ -165,6 +167,8 @@ def merge_dataset_splits(
             split_file = os.path.join(splits_dir, f'{split_name}_split.txt')
             
             if os.path.exists(split_file):
+                # BUG 41: track per-dataset count correctly
+                dataset_sample_count = 0
                 with open(split_file, 'r') as f:
                     for line in f:
                         parts = line.strip().split('\t')
@@ -172,8 +176,9 @@ def merge_dataset_splits(
                             sample_path, label = parts
                             merged_samples.append(sample_path)
                             merged_labels.append(int(label))
+                            dataset_sample_count += 1
                 
-                logger.info(f"Added {len(merged_samples)} samples from {dataset_name} {split_name} split")
+                logger.info(f"Added {dataset_sample_count} samples from {dataset_name} {split_name} split")
         
         # Save merged split
         merged_file = os.path.join(output_dir, f'{split_name}_split.txt')

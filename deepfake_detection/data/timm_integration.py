@@ -43,33 +43,16 @@ def create_deepfake_dataset(
     # Get image size from config
     image_size = config.get('image_size', 224)
     
-    # Create transforms using timm's factory
-    transform = create_transform(
-        input_size=(3, image_size, image_size),
-        is_training=(split == 'train'),
-        use_prefetcher=False,
-        no_aug=False,
-        scale=(0.08, 1.0),
-        ratio=(3./4., 4./3.),
-        hflip=0.5,
-        vflip=0.0,
-        color_jitter=0.4,
-        auto_augment='rand-m9-mstd0.5-inc1',
-        interpolation='bicubic',
-        mean=(0.485, 0.456, 0.406),
-        std=(0.229, 0.224, 0.225),
-        re_prob=0.25,
-        re_mode='pixel',
-        re_count=1,
-        crop_pct=0.875,
-    )
+    # BUG 01: Do NOT create transforms here — timm's create_loader applies
+    # its own augmentation + normalization pipeline. Passing a transform to the
+    # dataset AND using create_loader causes double aug/norm.
     
     # Create dataset based on type
     if dataset_type == 'faceforensics':
         dataset = FaceForensicsDataset(
             data_dir=data_dir,
             split=split,
-            transform=transform,
+            transform=None,  # BUG 01: let create_loader handle transforms
             image_size=image_size,
             categories=config.get('categories', None),
             videos_per_category=config.get('videos_per_category', 100)
@@ -78,7 +61,7 @@ def create_deepfake_dataset(
         dataset = CelebDFDataset(
             data_dir=data_dir,
             split=split,
-            transform=transform,
+            transform=None,  # BUG 01: let create_loader handle transforms
             image_size=image_size
         )
     else:
@@ -116,19 +99,17 @@ def create_deepfake_loader(
     if mixup_config is None:
         mixup_config = get_timm_mixup_transforms()
     
-    # Create MixUp function if requested and training
-    mixup_fn = None
+    # BUG 02: Only use collate-based MixUp (FastCollateMixup) to avoid
+    # double application. Do NOT also create a standalone Mixup object.
     collate_fn = None
     
     if use_mixup and is_training:
-        mixup_fn = Mixup(**mixup_config)
-        # Use FastCollateMixup for better performance
         collate_fn = FastCollateMixup(**mixup_config)
     
     # Create data loader using timm's create_loader
     loader = create_loader(
         dataset,
-        input_size=(3, 224, 224),  # Will be overridden by dataset transforms
+        input_size=(3, 224, 224),
         batch_size=batch_size,
         is_training=is_training,
         use_prefetcher=True,
@@ -158,7 +139,8 @@ def create_deepfake_loader(
     )
     
     logger.info(f"Created data loader with batch_size={batch_size}, mixup={use_mixup}")
-    return loader, mixup_fn
+    # BUG 02: return None for mixup_fn — MixUp is handled in collate_fn only
+    return loader, None
 
 
 def create_deepfake_loaders(
@@ -195,8 +177,8 @@ def create_deepfake_loaders(
             mixup_prob=training_config.get('augmentation', {}).get('mixup_prob', 0.5)
         )
     
-    # Create loaders for each split
-    for split in ['train', 'holdout', 'test']:
+    # Create loaders for each split (BUG 03: include 'val' split)
+    for split in ['train', 'val', 'holdout', 'test']:
         # Create dataset
         dataset = create_deepfake_dataset(
             dataset_type=dataset_type,

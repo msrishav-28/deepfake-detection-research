@@ -143,6 +143,9 @@ class FaceExtractor:
             minNeighbors=5,
             minSize=(self.min_face_size, self.min_face_size)
         )
+        # BUG 40: detectMultiScale can return empty tuple () instead of ndarray
+        if faces is None or len(faces) == 0:
+            return []
         
         # Convert to (x, y, w, h, confidence) format
         return [(x, y, w, h, 1.0) for x, y, w, h in faces]
@@ -456,7 +459,11 @@ def main():
     logger.info(f"Processing completed:")
     logger.info(f"  Videos processed: {processed_videos}/{len(video_files)}")
     logger.info(f"  Total faces extracted: {total_faces}")
-    logger.info(f"  Average faces per video: {total_faces/processed_videos:.1f}")
+    # BUG 39: Guard against division by zero when no videos processed
+    if processed_videos > 0:
+        logger.info(f"  Average faces per video: {total_faces/processed_videos:.1f}")
+    else:
+        logger.warning("  No videos were successfully processed")
     
     # Save processing summary
     summary = {

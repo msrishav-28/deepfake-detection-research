@@ -50,8 +50,9 @@ class MixUpAugmentation:
         else:
             lam = 1
         
-        # Ensure dominant sample retains majority weight (Zhang et al., 2018)
-        lam = max(lam, 1 - lam)
+        # BUG 05: Removed lam = max(lam, 1-lam) clipping.
+        # The original clips breaks the symmetric Beta distribution
+        # required by Zhang et al. (2018). Let lam be used as-is.
         
         # Create random permutation
         index = torch.randperm(batch_size).to(batch.device)

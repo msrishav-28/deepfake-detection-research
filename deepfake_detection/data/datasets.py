@@ -6,6 +6,7 @@ and CelebDF datasets with proper video frame extraction and preprocessing.
 """
 
 import os
+from pathlib import Path
 import cv2
 import torch
 import pandas as pd
@@ -101,9 +102,10 @@ class DeepfakeDataset(Dataset):
         try:
             image = Image.open(image_path).convert('RGB')
         except Exception as e:
-            logger.warning(f"Error loading image {image_path}: {e}")
-            # Return a black image as fallback
-            image = Image.new('RGB', (self.image_size, self.image_size), (0, 0, 0))
+            # BUG 18: Do not silently return a black image — this injects
+            # corrupted samples into training. Log and re-raise.
+            logger.error(f"Error loading image {image_path}: {e}")
+            raise
         
         # Apply transforms
         if self.transform:

@@ -67,7 +67,7 @@ def load_trained_models(
             model = factory.create_model(model_type, device)
             
             # Load checkpoint
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
             
             # Handle different checkpoint formats
             if 'model' in checkpoint:
@@ -220,6 +220,14 @@ def train_meta_learner(
     cv_folds = config.get('training', {}).get('ensemble', {}).get('cv_folds', 5)
     
     # Train meta-learner
+    # BUG 31: WARNING — cross-validation is performed on the same holdout set
+    # used to generate meta-features. This is technically in-sample CV since
+    # the meta-features were extracted from this data. For truly unbiased CV,
+    # a separate validation fold within the holdout would be needed.
+    logger.warning(
+        "Meta-learner CV is performed on holdout set used for meta-feature "
+        "generation. This is in-sample CV; results may be optimistically biased."
+    )
     cv_results = meta_learner.fit(meta_features, targets, cv_folds=cv_folds)
     
     logger.info(f"Meta-learner training completed")
@@ -333,8 +341,10 @@ def main():
     # Create ensemble
     ensemble = StackedEnsemble(models, meta_learner, device)
     
-    # Evaluate ensemble on hold-out set
-    ensemble_results = evaluate_ensemble(ensemble, holdout_loader, device)
+    # BUG 21: Evaluate ensemble on test set (not holdout, which was used to
+    # train the meta-learner and would produce biased metrics)
+    test_loader, _ = data_module.get_loader('test')
+    ensemble_results = evaluate_ensemble(ensemble, test_loader, device)
     
     # Create save directory
     os.makedirs(args.save_dir, exist_ok=True)

@@ -37,8 +37,9 @@ sys.path.insert(0, str(project_root))
 
 from deepfake_detection.models.ensemble import StackedEnsemble
 from deepfake_detection.data.datasets import FaceForensicsDataset, CelebDFDataset
-from deepfake_detection.evaluation.metrics import DeepfakeMetrics
-from deepfake_detection.utils.model_utils import load_model_weights
+from deepfake_detection.evaluation.metrics import EvaluationMetrics
+from deepfake_detection.models.base_models import load_model_weights, create_base_model
+from deepfake_detection.models.model_factory import ModelFactory
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,7 +53,7 @@ class DeepfakeEvaluationFramework:
         """Initialize the evaluation framework."""
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.metrics = DeepfakeMetrics()
+        self.metrics = EvaluationMetrics()
         
         # Model configurations
         self.model_configs = {
@@ -79,7 +80,9 @@ class DeepfakeEvaluationFramework:
             model_path = model_dir / 'base_models' / f'{model_name}_best.pth'
             if model_path.exists():
                 try:
-                    model = load_model_weights(model_name, str(model_path), self.device)
+                    factory = ModelFactory(self.config)
+                    model = factory.create_model(model_name, self.device)
+                    model = load_model_weights(model, str(model_path))
                     model.eval()
                     models[model_name] = model
                     logger.info(f"✓ Loaded {self.model_configs[model_name]}")
@@ -89,14 +92,14 @@ class DeepfakeEvaluationFramework:
                 logger.warning(f"Model not found: {model_path}")
         
         # Load stacked ensemble
-        ensemble_path = model_dir / 'ensemble' / 'stacked_ensemble.pth'
-        if ensemble_path.exists():
+        ensemble_dir = model_dir / 'ensemble'
+        if ensemble_dir.exists():
             try:
                 ensemble = StackedEnsemble(
-                    base_models=list(models.values()),
-                    meta_learner_type='logistic_regression'
+                    base_models=models,
+                    device=self.device
                 )
-                ensemble.load_state_dict(torch.load(ensemble_path, map_location=self.device))
+                ensemble.load_ensemble(str(ensemble_dir))
                 ensemble.eval()
                 models['ensemble'] = ensemble
                 logger.info(f"✓ Loaded {self.model_configs['ensemble']}")
@@ -190,7 +193,9 @@ class DeepfakeEvaluationFramework:
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 
-                # Measure inference time
+                # Measure inference time (BUG 24: sync GPU for accurate timing)
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
                 start_time = time.time()
                 
                 if 'ensemble' in model_name:
@@ -198,6 +203,8 @@ class DeepfakeEvaluationFramework:
                 else:
                     outputs = model(images)
                 
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
                 end_time = time.time()
                 
                 # Process outputs
@@ -221,7 +228,7 @@ class DeepfakeEvaluationFramework:
         metrics_result = self.metrics.calculate_all_metrics(
             y_true=all_labels,
             y_pred=all_predictions,
-            y_prob=all_probabilities
+            y_proba=np.array(all_probabilities)
         )
         
         # Add performance metrics
@@ -233,8 +240,8 @@ class DeepfakeEvaluationFramework:
         })
         
         logger.info(f"✓ {model_name}: Accuracy={metrics_result['accuracy']:.4f}, "
-                   f"AUC={metrics_result['auc']:.4f}, "
-                   f"Inference={metrics_result['avg_inference_time_ms']:.2f}ms")
+                    f"AUC={metrics_result['auc_roc']:.4f}, "
+                    f"Inference={metrics_result['avg_inference_time_ms']:.2f}ms")
         
         return metrics_result
     
@@ -266,17 +273,24 @@ class DeepfakeEvaluationFramework:
             return
         
         try:
-            # Get target layers for Grad-CAM based on architecture
+            # Get target layers for Grad-CAM based on architecture (BUG 23: reference through model.model)
             if 'vit' in model_name or 'deit' in model_name:
-                target_layers = [model.blocks[-1].norm1]
+                if hasattr(model, 'model') and hasattr(model.model, 'blocks'):
+                    target_layers = [model.model.blocks[-1].norm2]
+                else:
+                    target_layers = [model.blocks[-1].norm2]
             elif 'swin' in model_name:
-                target_layers = [model.layers[-1].blocks[-1].norm1]
+                if hasattr(model, 'model') and hasattr(model.model, 'layers'):
+                    target_layers = [model.model.layers[-1].blocks[-1].norm2]
+                else:
+                    target_layers = [model.layers[-1].blocks[-1].norm2]
             else:
                 logger.warning(f"Unknown architecture for {model_name}, skipping explainability")
                 return
             
-            # Initialize Grad-CAM
-            cam = GradCAM(model=model, target_layers=target_layers)
+            # Initialize Grad-CAM (BUG 23: use the inner model for cam)
+            inner_model = model.model if hasattr(model, 'model') else model
+            cam = GradCAM(model=inner_model, target_layers=target_layers)
             
             # Create visualization
             fig, axes = plt.subplots(2, 4, figsize=(16, 8))
@@ -295,9 +309,12 @@ class DeepfakeEvaluationFramework:
                 grayscale_cam = cam(input_tensor=image, targets=targets)
                 grayscale_cam = grayscale_cam[0, :]
                 
-                # Convert image for visualization
+                # Convert image for visualization (BUG 25: proper ImageNet denormalization)
                 img_np = image[0].cpu().permute(1, 2, 0).numpy()
-                img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min())
+                mean = np.array([0.485, 0.456, 0.406])
+                std = np.array([0.229, 0.224, 0.225])
+                img_np = img_np * std + mean
+                img_np = np.clip(img_np, 0, 1)
                 
                 # Create heatmap overlay
                 visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
@@ -402,8 +419,8 @@ class DeepfakeEvaluationFramework:
                         'accuracy': metrics.get('accuracy', 0),
                         'precision': metrics.get('precision', 0),
                         'recall': metrics.get('recall', 0),
-                        'f1_score': metrics.get('f1_score', 0),
-                        'auc': metrics.get('auc', 0),
+                        'f1': metrics.get('f1', 0),
+                        'auc_roc': metrics.get('auc_roc', 0),
                         'avg_inference_time_ms': metrics.get('avg_inference_time_ms', 0),
                         'throughput_samples_per_sec': metrics.get('throughput_samples_per_sec', 0),
                         'total_samples': metrics.get('total_samples', 0)
@@ -412,7 +429,7 @@ class DeepfakeEvaluationFramework:
         df = pd.DataFrame(summary_data)
         
         # Sort by AUC score (descending)
-        df = df.sort_values(['dataset', 'auc'], ascending=[True, False])
+        df = df.sort_values(['dataset', 'auc_roc'], ascending=[True, False]) if 'auc_roc' in df.columns else df
         
         # Save CSV
         csv_file = output_dir / 'deepfake_detection_benchmark.csv'
@@ -435,8 +452,8 @@ class DeepfakeEvaluationFramework:
                         'Model': self.model_configs.get(model_name, model_name),
                         'Dataset': dataset_name.title(),
                         'Accuracy': metrics.get('accuracy', 0),
-                        'AUC': metrics.get('auc', 0),
-                        'F1_Score': metrics.get('f1_score', 0),
+                        'AUC': metrics.get('auc_roc', 0),
+                        'F1': metrics.get('f1', 0),
                         'Inference_Time': metrics.get('avg_inference_time_ms', 0)
                     })
         
@@ -497,7 +514,7 @@ class DeepfakeEvaluationFramework:
             df_analysis = pd.DataFrame(all_results)
             
             # Model rankings
-            for metric in ['accuracy', 'auc', 'f1_score']:
+            for metric in ['accuracy', 'auc_roc', 'f1']:
                 if metric in df_analysis.columns:
                     ranking = df_analysis.groupby('model_display')[metric].mean().sort_values(ascending=False)
                     analysis['model_rankings'][metric] = ranking.to_dict()
